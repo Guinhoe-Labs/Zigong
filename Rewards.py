@@ -1,32 +1,44 @@
-def reward_function(event):
-    env_data = event.get("environment_state", {})
-    board = env_data.get("board")
+class RewardModule:
+    def __init__(self, reward_config=None):
+        self.FORMAT_PENALTY = reward_config.get("FORMAT_PENALTY", -10) if reward_config else -10
+        self.BOARD_WORD_USE_PENALTY = -8
+        self.VALID_HINT_REWARD = 5
 
-    master_result = event.get("master_result", "")
-    player_result = event.get("player_result", "")
-    # Master rewards
-    master_reward = 0
-    # Format must be correct
-    if master_result.get("success") is not True:
-        master_reward = -10  # Penalty for invalid format
-    elif master_result.get("hint_word") in set(board):
-        master_reward = -8  # Penalty for using board word as hint
-    else:
-        master_reward = 5  # Small reward for valid hint
+        self.CORRECT_GUESS_REWARD_WEIGHT = 5
+        self.NEUTRAL_GUESS_PENALTY_WEIGHT = 2
+        self.OPPONENT_GUESS_PENALTY_WEIGHT = 5
 
-    
-    # Player rewards
-    player_reward = 0
-    if player_result.get("success") is not True:
-        player_reward = -10  # Penalty for invalid format
-    else:
-        env_results = player_result.get("environment_result", {})
-        correct_guesses = sum(1 for res in env_results.get("results", []) if res.get("result") == "correct")
-        neutral_guesses = sum(1 for res in env_results.get("results", []) if res.get("result") == "neutral")
-        opponent_guesses = sum(1 for res in env_results.get("results", []) if res.get("result") == "opponent")
+    def reward_function(self, event):
+        env_data = event.get("environment_state", {})
+        board = env_data.get("board")
 
-        player_reward += correct_guesses * 5  # Reward for correct guesses
-        player_reward -= neutral_guesses * 2   # Penalty for neutral guesses
-        player_reward -= opponent_guesses * 5  # Penalty for opponent guesses
+        master_result = event.get("master_result", "")
+        player_result = event.get("player_result", "")
+        # Master rewards
+        master_reward = 0
+        # Format must be correct
+        if master_result.get("success") is not True:
+            master_reward = self.FORMAT_PENALTY  # Penalty for invalid format
+        elif master_result.get("hint_word") in set(board):
+            master_reward = self.BOARD_WORD_USE_PENALTY  # Penalty for using board word as hint
+        else:
+            master_reward = self.VALID_HINT_REWARD  # Small reward for valid hint
+        
+        # Player rewards
+        player_reward = 0
+        if player_result.get("success") is not True:
+            player_reward = self.FORMAT_PENALTY  # Penalty for invalid format
+        else:
+            env_results = player_result.get("environment_result", {})
 
-    return master_reward, player_reward
+            for res in env_results.get("results", []):
+                word, result = res.get("word"), res.get("result")
+                if word in env_data.get("guessed_words", []):
+                    player_reward -= 12  # Heavy penalty for guessing already guessed word
+                elif result == "correct":
+                    player_reward += self.CORRECT_GUESS_REWARD_WEIGHT
+                elif result == "neutral":
+                    player_reward -= self.NEUTRAL_GUESS_PENALTY_WEIGHT
+                elif result == "opponent":
+                    player_reward -= self.OPPONENT_GUESS_PENALTY_WEIGHT
+        return master_reward, player_reward
