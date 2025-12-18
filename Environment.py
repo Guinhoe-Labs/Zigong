@@ -44,7 +44,8 @@ class Environment:
     def get_master_state(self):
         return {
             "board": self.board,
-            "word_sets": self.word_sets
+            "word_sets": self.word_sets,
+            "guessed_words": self.guessed_words
         }
     
     def get_player_state(self):
@@ -80,17 +81,22 @@ class Environment:
                 results.append({"word": guess, "result": "invalid"})
                 continue
             
-            self.guessed_words.append(guess)
+            result = ""
             
             # Check if the guess is correct (team word)
             is_correct = any(guess in words for words in self.word_sets.values())
             if is_correct:
                 correct_count += 1
-                results.append({"word": guess, "result": "correct"})
+                result = "correct"
             elif guess in self.neutral_words:
-                results.append({"word": guess, "result": "neutral"})
+                result = "neutral"
             else:
-                results.append({"word": guess, "result": "opponent"})
+                result = "opponent"
+                
+            guess_dict = {"word": guess, "result": result}
+            
+            results.append(guess_dict)
+            self.guessed_words.append(guess_dict)
         
         return {
             "success": True,

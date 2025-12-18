@@ -33,10 +33,13 @@ class Orchestrator(ABC):
             all_team_words.update(words)
         neutral_words = [w for w in env_state["board"] if w not in all_team_words]
         
+        guessed_words = env_state["guessed_words"]
+        
         return MasterStateMessage(
             team_words=team_words,
             opponent_words=opponent_words,
-            neutral_words=neutral_words
+            neutral_words=neutral_words,
+            guessed_words=guessed_words
         )
     
     def handle_master_action(self, action: MasterActionMessage = None) -> dict:
@@ -293,7 +296,7 @@ class OllamaOrchestrator(Orchestrator):
         except (json.JSONDecodeError, Exception):
             return None
     
-from prompts.reasoning_prompts import format_reasoning_master_prompt, format_reasoning_player_prompt
+# from prompts.reasoning_prompts import format_reasoning_master_prompt, format_reasoning_player_prompt
 
 class OpenAIOrchestrator(Orchestrator):
     def __init__(self, config, api_key):
