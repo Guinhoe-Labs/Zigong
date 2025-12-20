@@ -12,23 +12,36 @@ from Rewards import RewardModule
 
 class Orchestrator(ABC):
     def __init__(self, orchestration_config):
-        self.environment = Environment(orchestration_config["env_config"])
-    
-    def get_master_state(self) -> MasterStateMessage:
+        # Support both dictionary and object configuration
+        if isinstance(orchestration_config, dict):
+            self.environment = Environment(orchestration_config.get("env_config"))
+            self.teams = {i+1: {
+                "master_model": team_cfg.get("master_model", "llama3.2b"),
+                "player_models": team_cfg.get("player_models", ["llama3.2b"])
+            } for i, team_cfg in enumerate(orchestration_config.get("team_configs", []))}
+        else:
+            self.environment = Environment(orchestration_config.env_config)
+            self.teams = {i+1: {
+                "master_model": team_cfg.master_model,
+                "player_models": team_cfg.player_models
+            } for i, team_cfg in enumerate(orchestration_config.team_configs)}
+
+    def get_master_state(self, team_id=1) -> MasterStateMessage:
         """Get the current game state formatted for the codemaster."""
-        env_state = self.environment.get_master_state()
+        env_state = self.environment.get_master_state(team_id)
         
         # Get team words LEFT for the specified master
+        # Note: Environment now ensures 'word_sets' is returned as a dict in get_master_state
         team_words = [    
-            i for i in env_state["word_sets"].get(1, [])
+            i for i in env_state["word_sets"].get(team_id, [])
             if i not in env_state["guessed_words"]
         ]
         
         # Determine opponent words (all other teams' words)
         opponent_words = []
-        # for team_id, words in env_state["word_sets"].items():
-        #     if team_id != master_id:
-        #         opponent_words.extend(words)
+        for tid, words in env_state["word_sets"].items():
+            if team_id != tid:
+                opponent_words.extend(words)
         
         # Neutral words are board words not assigned to any team
         all_team_words = set()
@@ -52,106 +65,140 @@ class Orchestrator(ABC):
         Returns the result from the environment.
         """
         result = self.environment.handle_master_action(action)
-        
         return {
             "success": True,
             "action": action.to_dict(),
-            "environment_result": result
+            "result": result
         }
     
-    def get_player_state(self) -> PlayerStateMessage:
+    def get_player_state(self, hint: dict) -> PlayerStateMessage:
         """Get the current game state formatted for a player."""
-        env_state = self.environment.get_player_state()
+        env_state = self.environment.get_player_state(team_id=1) # Defaulting to 1 for generic call, but see team_step override
         
         return PlayerStateMessage(
-            hint_word=env_state.get("current_hint", {}).get("word", ""),
-            hint_number=env_state.get("current_hint", {}).get("number", 0),
+            hint_word=hint.get("word", ""),
+            hint_number=hint.get("number", 0),
+            board=env_state.get("board", []),
+            guessed_words_log=env_state.get("guessed_words_log", [])
+        )
+        
+    def get_player_state_for_team(self, hint: dict, team_id: int) -> PlayerStateMessage:
+        env_state = self.environment.get_player_state(team_id)
+        return PlayerStateMessage(
+            hint_word=hint.get("word", ""),
+            hint_number=hint.get("number", 0),
             board=env_state.get("board", []),
             guessed_words_log=env_state.get("guessed_words_log", [])
         )
 
-    def handle_player_action(self, action: PlayerActionMessage) -> dict:
+    def handle_player_action(self, action: PlayerActionMessage, team_id: int = 1) -> dict:
         """
         Query the player model for guesses and pass them to the environment.
-        If action is None, generates a new action from the model.
-        Returns the result from the environment.
         """
-        result = self.environment.handle_player_action(action)
+        result = self.environment.handle_player_action(action, team_id)
         
         return {
             "success": True,
             "action": action.to_dict(),
-            "environment_result": result
+            "result": result
         }
     
+    def team_step(self, team_id: int) -> dict:
+        error_msg = ""
+
+        m_state: MasterStateMessage = self.get_master_state(team_id)
+        m_prompt: str = format_master_prompt(m_state)
+        m_response: str = ""
+        m_action: MasterActionMessage = None
+        m_result: dict = {}
+
+        p_prompt: str = ""
+        p_response: str = ""
+        p_action: PlayerActionMessage = None
+        p_result: dict = {}
+
+        success_flag = False
+        try:
+            # Query Master
+            m_response = self._query(m_prompt, self.teams[team_id]["master_model"])
+            print(f"[DEBUG] Team {team_id} Master Response:", m_response)
+            m_action = self._parse_master_response(m_response)
+            print(f"[DEBUG] Team {team_id} Master Action:", m_action)
+            if m_action is None:
+                error_msg = "Failed to parse master response"
+            
+            m_result = self.handle_master_action(m_action)
+            print(f"[DEBUG] Team {team_id} Master Result:", m_result)
+            if not m_result.get("success"):
+                error_msg = f"Master action failed: {m_result}"
+            
+            # Query Player
+            # Use specialized get_player_state_for_team to ensure correct log retrieval
+            p_state = self.get_player_state_for_team(m_result["result"]["hint"], team_id)
+            print(f"[DEBUG] Team {team_id} Player State:", p_state)
+            p_prompt = format_player_prompt(p_state)
+
+            if len(self.teams[team_id]["player_models"]) == 1:
+                p_response = self._query(p_prompt, self.teams[team_id]["player_models"][0]) 
+            else:
+                # TODO: Implement multi-player querying logic
+                print(f"[WARNING] Multiple player models found for team {team_id}, but logic not implemented.")
+                pass
+
+            p_action = self._parse_player_response(p_response)
+            print(f"[DEBUG] Team {team_id} Player Action:", p_action)
+            if p_action is None:
+                error_msg = "Failed to parse player response"
+            
+            p_result = self.handle_player_action(p_action, team_id)
+            print(f"[DEBUG] Team {team_id} Player Result:", p_result)
+        except Exception as e:
+            error_msg = str(e)
+        
+        success_flag = error_msg == ""
+        return {
+            "success": success_flag,
+            "error": error_msg,
+            "environment_state": self.environment.get_game_state(),
+            
+            "master_prompt": m_prompt,
+            "master_response": m_response,
+            "master_action": m_action.to_dict() if m_action else None,
+            "master_result": m_result,
+            
+            "player_prompt": p_prompt,
+            "player_response": p_response,
+            "player_action": p_action.to_dict() if p_action else None,
+            "player_result": p_result,
+        }
+                                                               
     def step(self) -> dict:
         """
         Run a complete turn: master gives hint, player guesses.
         Returns the combined results.
         """
         self.step_count += 1
+        overall_log = {}
+        for team_id in self.teams.keys():
+            print("[LOG] Team", team_id, "Step", self.step_count)
+            team_log = self.team_step(team_id)
+            overall_log[team_id] = team_log
         
-        # Initialize log data
-        m_state = self.get_master_state()
-        m_prompt = format_master_prompt(m_state)
-        m_response = ""
-        m_action = None
-        master_result = {}
-        
-        p_prompt = ""
-        p_response = ""
-        player_action = None
-        player_result = {}
-        
-        success_flag = False
-        error_msg = ""
-
-        try:
-            m_response = self._query(m_prompt, self.master_model)
-            m_action = self._parse_master_response(m_response)
-            
-            if m_action is None:
-                error_msg = "Failed to parse master response"
-                return self._finalize_step(m_prompt, m_response, m_action, master_result, 
-                                         p_prompt, p_response, player_action, player_result, 
-                                         False, error_msg)
-
-            master_result = self.handle_master_action(m_action)
-            if not master_result.get("success"):
-                error_msg = f"Master action failed: {master_result}"
-                return self._finalize_step(m_prompt, m_response, m_action, master_result, 
-                                         p_prompt, p_response, player_action, player_result, 
-                                         False, error_msg)
-
-            p_state = self.get_player_state()
-            p_prompt = format_player_prompt(p_state)
-            p_response = self._query(p_prompt, self.player_model)
-            
-            player_action = self._parse_player_response(p_response)
-            if player_action is None:
-                error_msg = "Failed to parse player response"
-                return self._finalize_step(m_prompt, m_response, m_action, master_result, 
-                                         p_prompt, p_response, player_action, player_result, 
-                                         False, error_msg)
-
-            player_result = self.handle_player_action(player_action)
-            success_flag = True
-            
-        except Exception as e:
-            error_msg = str(e)
-            success_flag = False
-        
-        return self._finalize_step(m_prompt, m_response, m_action, master_result, 
-                                 p_prompt, p_response, player_action, player_result, 
-                                 success_flag, error_msg)
+        return self._finalize_step(overall_log)
     
     def run_episode(self, limit: int = 10) -> dict:
         """Run the full game until completion."""
         while not self.environment.check_win() and self.step_count < limit:
             step_result = self.step()
-            if not step_result.get("success"):
-                return {"success": False, "complete_log": self.orchestration_log, "reward_log": self.reward_log, "total_steps": self.step_count}
-        return {"success": True, "complete_log": self.orchestration_log, "reward_log": self.reward_log, "total_steps": self.step_count}
+            
+        winner = self.environment.get_winner()
+        return {
+            "success": True, 
+            "winner": winner,
+            "complete_log": self.orchestration_log, 
+            "reward_log": self.reward_log, 
+            "total_steps": self.step_count
+        }
     
     def save_run_log(self, filepath: str, run_id: str):
         """Save the orchestration log to a JSON file."""
@@ -168,39 +215,31 @@ class Orchestrator(ABC):
         """Reset the orchestrator for a new episode."""
         self.environment = Environment(self.config_dict.get("env_config"))
         self.orchestration_log = {}
-        self.reward_log = {}
+        self.reward_log = {i: [] for i in self.teams.keys()}
         self.step_count = 0
 
-    def _finalize_step(self, m_prompt, m_resp, m_action, m_result, 
-                      p_prompt, p_resp, p_action, p_result, 
-                      success, error_msg=""
-                      ) -> dict:
+    def _finalize_step(self, team_logs) -> dict:
         
         log_event = {
             "step": self.step_count,
-            "success": success,
-            "error": error_msg,
             "environment_state": self.environment.get_game_state(),
-            
-            "master_prompt": m_prompt,
-            "master_response": m_resp,
-            "master_action": m_action.to_dict() if m_action else None,
-            "master_result": m_result,
-            
-            "player_prompt": p_prompt,
-            "player_response": p_resp,
-            "player_action": p_action.to_dict() if p_action else None,
-            "player_result": p_result,
-            
-            "game_over": self.environment.check_win()
+            "game_over": self.environment.check_win(),
+            "team_logs": team_logs
         }
         
         self.orchestration_log[self.step_count] = log_event
-        try:
-            self.reward_log[self.step_count] = self.reward_module.reward_function(log_event)
-        except Exception:
-            self.reward_log[self.step_count] = (0, 0)
+        for i in team_logs.keys():
+            master_reward, player_reward = 0, 0
+            try:
+                master_reward, player_reward = self.reward_module.reward_function(team_logs[i])
+            except Exception:
+                pass
             
+            # Ensure reward_log key exists
+            if i not in self.reward_log:
+                self.reward_log[i] = []
+            self.reward_log[i].append((master_reward, player_reward))
+                
         return log_event
     
     @abstractmethod
@@ -226,17 +265,15 @@ class OllamaOrchestrator(Orchestrator):
         super().__init__(self.config_dict)
         self.config = config
 
-        self.master_model = self.config_dict.get("master_model", "llama3.2b")
-        self.player_model = self.config_dict.get("player_model", "llama3.2b")
         self.ollama_url = self.config_dict.get("ollama_url", "http://localhost:11434/api/generate")
 
         self.orchestration_log = {}
-        self.reward_log = {}
+        # Correct initialization of reward_log keys
+        self.reward_log = {i: [] for i in self.teams.keys()}
         self.step_count = 0
         
         # Initialize Reward Module
         self.reward_module = RewardModule(self.config_dict.get("reward_config"))
-        print(f"Ollama Orchestrator initialized with Master Model: {self.master_model}, Player Model: {self.player_model}")
 
     def _query(self, prompt: str, model: str) -> str:
         """Query the Ollama API with the given prompt and model."""
@@ -298,8 +335,6 @@ class OllamaOrchestrator(Orchestrator):
             return PlayerActionMessage(guesses=data.get("guesses", []))
         except (json.JSONDecodeError, Exception):
             return None
-    
-# from prompts.reasoning_prompts import format_reasoning_master_prompt, format_reasoning_player_prompt
 
 class OpenAIOrchestrator(Orchestrator):
     def __init__(self, config, api_key):
@@ -312,17 +347,15 @@ class OpenAIOrchestrator(Orchestrator):
         super().__init__(self.config_dict)
         self.config = config
 
-        self.master_model = self.config_dict.get("master_model", "gpt-5-nano")
-        self.player_model = self.config_dict.get("player_model", "gpt-5-nano")
         self.api_key = api_key
 
         self.orchestration_log = {}
-        self.reward_log = {}
+        self.reward_log = {i: [] for i in self.teams.keys()}
         self.step_count = 0
         
         # Initialize Reward Module
         self.reward_module = RewardModule(self.config_dict.get("reward_config"))
-        print(f"OpenAI Orchestrator initialized with Master Model: {self.master_model}, Player Model: {self.player_model}")
+        print(f"OpenAI Orchestrator initialized")
 
     def _query(self, prompt: str, model: str) -> str:
         """Query the OpenAI API with the given prompt and model."""
@@ -358,7 +391,7 @@ class OpenAIOrchestrator(Orchestrator):
             return f"Error querying OpenAI: {e}"
     
     def _parse_master_response(self, response: str) -> MasterActionMessage:
-        """Parse the master's response to extract hint word and number."""
+        """Reuse Ollama logic or same logic"""
         try:
             # Look for the <RESULT>...</RESULT> block
             result_match = re.search(r'<RESULT>(.*?)</RESULT>', response, re.DOTALL | re.IGNORECASE)
@@ -367,24 +400,20 @@ class OpenAIOrchestrator(Orchestrator):
             else:
                 result_text = response
             
-            # Robust regex to handle quotes and spacing
-            # Matches: HINT: "apple" NUMBER: 2 Or HINT: apple NUMBER: 2
             hint_match = re.search(r'HINT:\s*["\']?([\w-]+)["\']?\s*NUMBER:\s*(\d+)', result_text, re.IGNORECASE)
             if hint_match:
                 return MasterActionMessage(
                     hint_word=hint_match.group(1),
                     hint_number=int(hint_match.group(2))
                 )
-            
             return None
         except Exception as e:
             print(f"Exception during Master parsing: {e}")
             return None
 
     def _parse_player_response(self, response: str) -> PlayerActionMessage:
-        """Parse the player's response to extract guesses."""
+        """Reuse existing logic"""
         try:
-            # First, try to find the <RESULT> block
             result_match = re.search(r'<RESULT>(.*?)</RESULT>', response, re.DOTALL | re.IGNORECASE)
             if result_match:
                 result_text = result_match.group(1)
@@ -396,7 +425,6 @@ class OpenAIOrchestrator(Orchestrator):
                 data = json.loads(json_match.group(0))
                 return PlayerActionMessage(guesses=data.get("guesses", []))
             
-            # Fallback: try parsing the whole response as JSON
             data = json.loads(response)
             return PlayerActionMessage(guesses=data.get("guesses", []))
         except (json.JSONDecodeError, Exception):
