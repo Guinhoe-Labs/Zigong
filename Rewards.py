@@ -19,7 +19,7 @@ class RewardModule:
         # Format must be correct
         if master_result.get("success") is not True:
             master_reward = self.FORMAT_PENALTY  # Penalty for invalid format
-        elif master_result.get("hint_word") in set(board):
+        elif master_result.get("action", {}).get("hint_word") in set(board):
             master_reward = self.BOARD_WORD_USE_PENALTY  # Penalty for using board word as hint
         else:
             master_reward = self.VALID_HINT_REWARD  # Small reward for valid hint
@@ -29,12 +29,13 @@ class RewardModule:
         if player_result.get("success") is not True:
             player_reward = self.FORMAT_PENALTY  # Penalty for invalid format
         else:
-            env_results = player_result.get("environment_result", {})
+            env_results = player_result.get("result", {})
 
             for res in env_results.get("results", []):
                 word, result = res.get("word"), res.get("result")
-                if word in env_data.get("guessed_words", []):
-                    player_reward -= 12  # Heavy penalty for guessing already guessed word
+                
+                if result == "already_guessed":
+                    player_reward -= 12
                 elif result == "correct":
                     player_reward += self.CORRECT_GUESS_REWARD_WEIGHT
                 elif result == "neutral":
