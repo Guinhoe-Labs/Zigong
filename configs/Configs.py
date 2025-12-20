@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 
-@dataclass
+@dataclass 
 class OrchestratorConfig:
-    master_model: str
-    player_model: str
+    team_configs: list['TeamConfig']
     env_config: 'EnvironmentConfig'
     reward_config: 'RewardConfig'
     
@@ -34,3 +33,8 @@ class EnvironmentConfig:
     teams: int
     max_words: int
     word_list_file: str
+
+@dataclass
+class TeamConfig:
+    master_model: str
+    player_models: list[str]  
