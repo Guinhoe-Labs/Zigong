@@ -144,32 +144,78 @@ class Orchestrator:
             if not m_result.get("success"):
                 error_msg = f"Master action failed: {m_result}"
             
-            # Query Player
-            # Use specialized get_player_state_for_team to ensure correct log retrieval
-            p_state = self.get_player_state_for_team(m_result["result"]["hint"], team_id)
-            print(f"[DEBUG] Team {team_id} Player State:", p_state)
-            p_prompt = format_player_prompt(p_state)
-
-            if len(self.teams[team_id]["player_models"]) == 1:
-                p_action, p_response = self.teams[team_id]["player_models"][0].generate_player_action(p_prompt)
-            else:
-                # Multi-player Consensus (utilizing cross-talk)
-                ct_module = CrossTalkModule(self.teams[team_id]["player_models"])
-                
-                # Extract hint text for prompts
-                hint_data = m_result["result"]["hint"]
-                hint_text = f"{hint_data.get('word', 'UNKNOWN')} {hint_data.get('number', 0)}"
-                
-                p_action, p_response = ct_module.execute(initial_prompt=p_prompt, hint_text=hint_text)
-                print(f"[DEBUG] Team {team_id} Players Response:", p_response)
-
-            # p_action = self._parse_player_response(p_response)
-            print(f"[DEBUG] Team {team_id} Player Action:", p_action)
-            if p_action is None:
-                error_msg = "Failed to parse player response"
+            # Query Player Loop
+            total_guesses_allowed = m_result["result"]["hint"]["number"]
+            guesses_made = 0
+            accumulated_guesses = []
+            accumulated_results = []
             
-            p_result = self.handle_player_action(p_action, team_id)
-            print(f"[DEBUG] Team {team_id} Player Result:", p_result)
+            # Initial prompt setup
+            p_prompt = ""
+            p_response = "" # Keep last response for logging/debugging
+            
+            while guesses_made < total_guesses_allowed:
+                # Use specialized get_player_state_for_team to ensure correct log retrieval
+                # We need fresh state every time because the board changes after a correct guess
+                p_state = self.get_player_state_for_team(m_result["result"]["hint"], team_id)
+                p_prompt = format_player_prompt(p_state)
+
+                if len(self.teams[team_id]["player_models"]) == 1:
+                    current_p_action, current_p_response = self.teams[team_id]["player_models"][0].generate_player_action(p_prompt)
+                else:
+                     # Multi-player Consensus (utilizing cross-talk)
+                    ct_module = CrossTalkModule(self.teams[team_id]["player_models"])
+                    
+                    # Extract hint text for prompts
+                    hint_data = m_result["result"]["hint"]
+                    hint_text = f"{hint_data.get('word', 'UNKNOWN')} {hint_data.get('number', 0)}"
+                    
+                    current_p_action, current_p_response = ct_module.execute(initial_prompt=p_prompt, hint_text=hint_text)
+                
+                p_response = current_p_response # Update last response
+                
+                if current_p_action is None or not current_p_action.guesses:
+                    error_msg = "Failed to parse player response or empty guess"
+                    break
+                
+                # Enforce single guess
+                single_guess = current_p_action.guesses[0]
+                
+                # Create a single-guess action wrapper for environment
+                single_action_msg = PlayerActionMessage(guesses=[single_guess])
+                
+                print(f"[DEBUG] Team {team_id} Player Guess {guesses_made+1}: {single_guess}")
+                
+                current_p_result = self.handle_player_action(single_action_msg, team_id)
+                print(f"[DEBUG] Team {team_id} Player Result {guesses_made+1}: {current_p_result}")
+                
+                # Accumulate
+                accumulated_guesses.append(single_guess)
+                # handle_player_action returns a list of results, we take the first one since we sent one guess
+                if current_p_result['success'] and current_p_result['result']['success']:
+                    guess_result_entry = current_p_result['result']['results'][0]
+                    print(f"[DEBUG] Guesses Made: {guesses_made}, Guesses Allowed: {total_guesses_allowed}")
+                    accumulated_results.append(guess_result_entry)
+                    
+                    result_type = guess_result_entry.get("result")
+                    if result_type == "correct":
+                        guesses_made += 1
+                        # Continue loop
+                    else:
+                        # Wrong guess (opponent, neutral, invalid, already_guessed), stop turn
+                        break
+                else:
+                    error_msg = f"Player action failed: {current_p_result}"
+                    break
+            
+            # Aggregate results to match previous interface
+            p_action = PlayerActionMessage(guesses=accumulated_guesses)
+            p_result = {
+                "success": True,
+                "results": accumulated_results,
+                "correct_count": sum(1 for r in accumulated_results if r.get("result") == "correct"),
+                "game_over": self.environment.check_win() 
+            }
         except Exception as e:
             error_msg = str(e)
         

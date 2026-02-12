@@ -58,12 +58,12 @@ Select words from the board that you believe are related to the hint. Aim to sel
 1. **Analyze the Hint**: Consider the meaning of the hint word and what it might be associated with.
 2. **Scan the Board**: Look at all the available words on the board.
 3. **Evaluate Associations**: For each word on the board, determine if it has a strong, medium, or weak connection to the hint.
-4. **Select Guesses**: Choose the words with the strongest connections. Stop if you are unsure or have reached the number of words indicated by the hint.
+4. **Select Guesses**: Choose the single word with the strongest connection to the hint.
 5. **Format Output**: Provide your reasoning in a <THOUGHT> block, and then your final guesses in the JSON format.
 
 ## Rules
 - Be cautious not to select words that belong to the opposing team or neutral words.
-- You may choose to guess fewer words than indicated if you're uncertain.
+- You must guess one word at a time.
 - Already guessed words cannot be selected again.
 - Your final output MUST be valid JSON.
 
@@ -78,14 +78,16 @@ Your output MUST be in the following format:
    - "pie": strong (apple pie)
    - "computer": weak (apple computers? maybe, but fruit is more direct)
    - "sky": no connection
-4. Decision: I will guess "banana" and "pie".
+4. Decision: I will guess "banana" first.
 </THOUGHT>
 
 <RESULT>
 {{
-    "guesses": ["guessed_word1", "guessed_word2", ...]
+    "guesses": ["guessed_word"]
 }}
 </RESULT>
+
+Note: The system will prompt you again for subsequent guesses if your first guess is correct, providing the updated context.
 """
 
 

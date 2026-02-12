@@ -16,7 +16,7 @@ Your goal is to win the game by connecting your team's words with clever, safe h
 
 ## Output Format
 You must output your internal thought process and the final action.
-Use the following structure:
+Strictly follow and use the following structure:
 
 <THOUGHT>
 [Detailed analysis of word associations, potential risks, and trade-offs]
