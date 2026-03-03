@@ -25,6 +25,7 @@ class AgentState(TypedDict):
     # Context data
     initial_prompt: str
     hint_text: str
+    game_state: str  # Concise JSON with board + guessed_words_log
 
 def create_independent_node(model_idx, model: BenchmarkAgent):
     """
@@ -70,7 +71,8 @@ def create_cross_pollination_node(model_idx, model, total_models):
         prompt = format_cross_pollination_prompt(
             hint=state["hint_text"],
             previous_thought=my_prev_response,
-            teammate_thoughts=teammate_thoughts_text
+            teammate_thoughts=teammate_thoughts_text,
+            game_state=state["game_state"]
         )
         
         # 3. Generate
@@ -102,7 +104,8 @@ def create_judge_node(judge_model, total_models):
         # 2. Format prompt
         prompt = format_judge_prompt(
             hint=state["hint_text"],
-            team_proposals=team_proposals_text
+            team_proposals=team_proposals_text,
+            game_state=state["game_state"]
         )
         
         # 3. Generate
@@ -154,13 +157,14 @@ class CrossTalkModule:
         
         self.app = self.workflow.compile()
 
-    def execute(self, initial_prompt: str, hint_text: str):
+    def execute(self, initial_prompt: str, hint_text: str, game_state: str = ""):
         final_state = self.app.invoke(
             {
                 "round_1_responses": {},
                 "round_2_responses": {},
                 "initial_prompt": initial_prompt,
                 "hint_text": hint_text,
+                "game_state": game_state,
                 "messages": []
             },
             config={"configurable": {"thread_id": "1"}}

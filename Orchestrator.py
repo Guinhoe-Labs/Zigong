@@ -149,6 +149,7 @@ class Orchestrator:
             guesses_made = 0
             accumulated_guesses = []
             accumulated_results = []
+            guess_log = []  # Per-guess detailed log
             
             # Initial prompt setup
             p_prompt = ""
@@ -170,7 +171,14 @@ class Orchestrator:
                     hint_data = m_result["result"]["hint"]
                     hint_text = f"{hint_data.get('word', 'UNKNOWN')} {hint_data.get('number', 0)}"
                     
-                    current_p_action, current_p_response = ct_module.execute(initial_prompt=p_prompt, hint_text=hint_text)
+                    # Build concise game state JSON for cross-talk context
+                    game_state_json = json.dumps(p_state.to_dict(), indent=2)
+                    
+                    current_p_action, current_p_response = ct_module.execute(
+                        initial_prompt=p_prompt,
+                        hint_text=hint_text,
+                        game_state=game_state_json
+                    )
                 
                 p_response = current_p_response # Update last response
                 
@@ -196,6 +204,15 @@ class Orchestrator:
                     guess_result_entry = current_p_result['result']['results'][0]
                     print(f"[DEBUG] Guesses Made: {guesses_made}, Guesses Allowed: {total_guesses_allowed}")
                     accumulated_results.append(guess_result_entry)
+                    
+                    # Log this individual guess with full context
+                    guess_log.append({
+                        "guess_number": len(guess_log) + 1,
+                        "prompt": p_prompt,
+                        "response": current_p_response,
+                        "guess": single_guess,
+                        "result": guess_result_entry.get("result"),
+                    })
                     
                     result_type = guess_result_entry.get("result")
                     if result_type == "correct":
@@ -234,6 +251,7 @@ class Orchestrator:
             "player_response": p_response,
             "player_action": p_action.to_dict() if p_action else None,
             "player_result": p_result,
+            "guess_log": guess_log,
         }
                                                                
     def step(self) -> dict:
