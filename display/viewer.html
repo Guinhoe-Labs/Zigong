@@ -380,6 +380,127 @@
         .judge-content {
             padding: 10px;
         }
+
+        /* Guess Result Styles */
+        .guess-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .guess-entry {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            background: #fafafa;
+            font-size: 0.9em;
+        }
+
+        .guess-number {
+            font-weight: 700;
+            color: #7f8c8d;
+            min-width: 28px;
+            text-align: center;
+        }
+
+        .guess-word {
+            font-weight: 600;
+            font-size: 1.05em;
+            flex: 1;
+        }
+
+        .guess-result-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .guess-correct {
+            background: #d4edda;
+            border-color: #27ae60;
+            color: #155724;
+        }
+
+        .guess-correct .guess-word {
+            color: #155724;
+        }
+
+        .guess-correct .guess-result-badge {
+            background: #c3e6cb;
+            color: #155724;
+        }
+
+        .guess-neutral {
+            background: #fff3cd;
+            border-color: #f0ad4e;
+            color: #856404;
+        }
+
+        .guess-neutral .guess-word {
+            color: #856404;
+        }
+
+        .guess-neutral .guess-result-badge {
+            background: #ffeeba;
+            color: #856404;
+        }
+
+        .guess-opponent {
+            background: #f8d7da;
+            border-color: #e74c3c;
+            color: #721c24;
+        }
+
+        .guess-opponent .guess-word {
+            color: #721c24;
+        }
+
+        .guess-opponent .guess-result-badge {
+            background: #f5c6cb;
+            color: #721c24;
+        }
+
+        .guess-other {
+            background: #e2e3e5;
+            border-color: #adb5bd;
+            color: #383d41;
+        }
+
+        .guess-other .guess-word {
+            color: #383d41;
+        }
+
+        .guess-other .guess-result-badge {
+            background: #d6d8db;
+            color: #383d41;
+        }
+
+        .guess-summary {
+            margin-top: 10px;
+            padding: 10px 14px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.85em;
+            color: #495057;
+            border: 1px solid #e9ecef;
+        }
+
+        .guess-summary strong {
+            color: #2c3e50;
+        }
+
+        .no-guesses {
+            color: #bdc3c7;
+            font-style: italic;
+            padding: 10px 0;
+        }
     </style>
 </head>
 
@@ -528,24 +649,8 @@
                             <!-- Player Column -->
                             <div>
                                 <h3 style="margin-top:0; border-bottom:2px solid #e67e22; padding-bottom:5px; color:#2c3e50;">Guesser</h3>
-                                <div class="section">
-                                    <div class="label">Prompt</div>
-                                    <pre>${escapeHtml(stepData.player_prompt || "")}</pre>
-                                </div>
-                                <div class="section">
-                                    <div class="label">Response Analysis</div>
-                                    ${renderPlayerResponse(stepData.player_response)}
-                                </div>
-                                <div class="section">
-                                    <div class="label">Guesses</div>
-                                    <pre style="background:#fdf2e9; border-color:#fadbd8;">${JSON.stringify(stepData.player_action, null, 2)}</pre>
-                                </div>
+                                ${renderGuesserColumn(stepData)}
                             </div>
-                        </div>
-
-                         <div class="section">
-                            <div class="label">Outcome</div>
-                            <pre>${JSON.stringify(stepData.player_result, null, 2)}</pre>
                         </div>
                     </div>
                 </div>
@@ -564,6 +669,114 @@
         }
 
         // --- Helpers ---
+        function renderGuesserColumn(stepData) {
+            const guessLog = stepData.guess_log;
+
+            // If we have a detailed guess_log, render per-guess iterations
+            if (guessLog && Array.isArray(guessLog) && guessLog.length > 0) {
+                let html = '';
+                guessLog.forEach((entry, idx) => {
+                    const resultType = entry.result || 'unknown';
+                    let cssClass = 'guess-other';
+                    if (resultType === 'correct') cssClass = 'guess-correct';
+                    else if (resultType === 'neutral') cssClass = 'guess-neutral';
+                    else if (resultType === 'opponent') cssClass = 'guess-opponent';
+
+                    html += `<div class="round-block" style="margin-bottom:12px">
+                        <div class="round-header" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;"
+                             onclick="this.nextElementSibling.classList.toggle('active')">
+                            <span>Guess #${entry.guess_number || idx + 1}: <strong>${escapeHtml(entry.guess)}</strong></span>
+                            <span class="guess-result-badge ${cssClass}" style="margin-left:8px">${escapeHtml(resultType)}</span>
+                        </div>
+                        <div class="step-content">
+                            <div class="section">
+                                <div class="label">Prompt</div>
+                                <pre>${escapeHtml(entry.prompt || "")}</pre>
+                            </div>
+                            <div class="section">
+                                <div class="label">Response</div>
+                                ${renderPlayerResponse(entry.response)}
+                            </div>
+                        </div>
+                    </div>`;
+                });
+
+                // Summary
+                html += renderGuesses(stepData.player_action, stepData.player_result);
+                return html;
+            }
+
+            // Fallback: old format without guess_log
+            let html = `
+                <div class="section">
+                    <div class="label">Prompt</div>
+                    <pre>${escapeHtml(stepData.player_prompt || "")}</pre>
+                </div>
+                <div class="section">
+                    <div class="label">Response Analysis</div>
+                    ${renderPlayerResponse(stepData.player_response)}
+                </div>
+                <div class="section">
+                    <div class="label">Guesses</div>
+                    ${renderGuesses(stepData.player_action, stepData.player_result)}
+                </div>`;
+            return html;
+        }
+
+        function renderGuesses(playerAction, playerResult) {
+            if (!playerAction || !playerAction.guesses || playerAction.guesses.length === 0) {
+                return '<div class="no-guesses">No guesses made</div>';
+            }
+
+            // Normalize results array: handle both flat and nested format
+            let results = [];
+            if (playerResult) {
+                if (playerResult.results && Array.isArray(playerResult.results)) {
+                    results = playerResult.results;
+                } else if (playerResult.result && playerResult.result.results && Array.isArray(playerResult.result.results)) {
+                    results = playerResult.result.results;
+                }
+            }
+
+            const guesses = playerAction.guesses;
+            let html = '<div class="guess-list">';
+
+            guesses.forEach((word, idx) => {
+                const resultEntry = results[idx];
+                const resultType = resultEntry ? resultEntry.result : 'unknown';
+
+                let cssClass = 'guess-other';
+                let label = resultType || 'unknown';
+                if (resultType === 'correct') cssClass = 'guess-correct';
+                else if (resultType === 'neutral') cssClass = 'guess-neutral';
+                else if (resultType === 'opponent') cssClass = 'guess-opponent';
+                else if (resultType === 'invalid') cssClass = 'guess-other';
+                else if (resultType === 'already_guessed') cssClass = 'guess-other';
+
+                html += `<div class="guess-entry ${cssClass}">
+                    <span class="guess-number">#${idx + 1}</span>
+                    <span class="guess-word">${escapeHtml(word)}</span>
+                    <span class="guess-result-badge">${escapeHtml(label)}</span>
+                </div>`;
+            });
+
+            html += '</div>';
+
+            // Summary line
+            const correctCount = results.filter(r => r && r.result === 'correct').length;
+            const totalGuesses = guesses.length;
+            const gameOver = playerResult && (playerResult.game_over || (playerResult.result && playerResult.result.game_over));
+
+            html += `<div class="guess-summary">
+                <strong>${correctCount}</strong> of <strong>${totalGuesses}</strong> correct`;
+            if (gameOver) {
+                html += ' &mdash; <strong style="color:#27ae60">Game Over (Win!)</strong>';
+            }
+            html += '</div>';
+
+            return html;
+        }
+
         function renderBoard(envState) {
             if (!envState || !envState.board) return "No board state";
             const board = envState.board;
