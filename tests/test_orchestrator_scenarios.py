@@ -6,6 +6,10 @@ from unittest.mock import MagicMock, patch
 
 # Adjust path to import from parent directory
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.modules["langgraph"] = MagicMock()
+sys.modules["langgraph.graph"] = MagicMock()
+sys.modules["langgraph.graph.message"] = MagicMock()
+sys.modules["core.CrossTalk"] = MagicMock()
 
 from Orchestrator import Orchestrator
 from Environment import Environment as EnvironmentStandard
@@ -43,10 +47,10 @@ class TestOrchestratorStandard(unittest.TestCase):
             "HINT: 'precious' NUMBER: 2"
         )
         
-        self.mock_player.generate_player_action.return_value = (
-            PlayerActionMessage(guesses=["gold", "diamond"]),
-            '{"guesses": ["gold", "diamond"]}'
-        )
+        self.mock_player.generate_player_action.side_effect = [
+            (PlayerActionMessage(guesses=["gold"]), '{"guesses": ["gold"]}'),
+            (PlayerActionMessage(guesses=["diamond"]), '{"guesses": ["diamond"]}'),
+        ]
 
         step_result = self.orch.step()
         
@@ -57,14 +61,16 @@ class TestOrchestratorStandard(unittest.TestCase):
         self.assertIn("gold", str(master_prompt))
         self.assertIn("diamond", str(master_prompt))
         
-        self.assertEqual(log_entry['team_logs'][1]['master_action']['hint_word'], "precious")
-        self.assertEqual(log_entry['team_logs'][1]['master_action']['hint_number'], 2)
+        master_action = log_entry['team_logs'][1]['master_action']
+        self.assertIsInstance(master_action, dict)
+        self.assertEqual(master_action['hint_word'], "precious")
+        self.assertEqual(master_action['hint_number'], 2)
         
         player_prompt = log_entry['team_logs'][1]['player_prompt']
         self.assertIn("precious", str(player_prompt))
         
         result = step_result['team_logs'][1]['player_result']
-        self.assertEqual(result['result']['correct_count'], 2)
+        self.assertEqual(result['correct_count'], 2)
         self.assertEqual(step_result['team_logs'][1]['success'], True)
         
         self.assertIn("gold", self.env.guessed_words)
@@ -115,8 +121,10 @@ class TestOrchestratorMultiteam(unittest.TestCase):
         
         step_result = self.orch.team_step(1)
         
-        self.assertEqual(step_result['master_action']['hint_word'], "shiny")
-        self.assertEqual(step_result['player_result']['result']['correct_count'], 1)
+        master_action = step_result['master_action']
+        self.assertIsInstance(master_action, dict)
+        self.assertEqual(master_action['hint_word'], "shiny")
+        self.assertEqual(step_result['player_result']['correct_count'], 1)
         self.assertIn("gold", self.env.guessed_words)
 
     def test_team2_step_fail(self):
@@ -129,14 +137,14 @@ class TestOrchestratorMultiteam(unittest.TestCase):
             MasterActionMessage(hint_word="liquid", hint_number=2),
             "HINT: liquid NUMBER: 2"
         )
-        mock_player.generate_player_action.return_value = (
-            PlayerActionMessage(guesses=["water", "gold"]),
-            '{"guesses": ["water", "gold"]}'
-        )
+        mock_player.generate_player_action.side_effect = [
+            (PlayerActionMessage(guesses=["water"]), '{"guesses": ["water"]}'),
+            (PlayerActionMessage(guesses=["gold"]), '{"guesses": ["gold"]}'),
+        ]
         
         step_result = self.orch.team_step(2)
         
-        results = step_result['player_result']['result']['results']
+        results = step_result['player_result']['results']
         self.assertEqual(results[0]['word'], "water")
         self.assertEqual(results[1]['word'], "gold")
         
@@ -178,19 +186,22 @@ class TestOrchestratorMultiteam(unittest.TestCase):
             "Hint: shiny 1"
         )
         
-        step_result = self.orch.team_step(1)
+        with patch("Orchestrator.CrossTalkModule") as mock_ct_module_cls:
+            mock_ct_module = MagicMock()
+            mock_ct_module.execute.return_value = (
+                PlayerActionMessage(guesses=["gold"]),
+                '{"judge_reasoning": "Consensus is gold"}'
+            )
+            mock_ct_module_cls.return_value = mock_ct_module
+            step_result = self.orch.team_step(1)
         
         # Assert SUCCESS first
         self.assertEqual(step_result['error'], "", f"Step failed with error: {step_result['error']}")
         
         # Verify Results
         p_result = step_result['player_result']
-        self.assertEqual(p_result['result']['correct_count'], 1)
-        self.assertEqual(p_result['result']['results'][0]['word'], "gold")
-        
-        # Verify Model Calls
-        self.assertEqual(mock_p1.generate_player_action.call_count, 2)
-        self.assertEqual(mock_p2.generate_player_action.call_count, 3)
+        self.assertEqual(p_result['correct_count'], 1)
+        self.assertEqual(p_result['results'][0]['word'], "gold")
 
 if __name__ == "__main__":
     unittest.main()

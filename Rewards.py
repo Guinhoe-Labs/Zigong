@@ -32,7 +32,8 @@ class RewardModule:
         if player_result.get("success") is not True:
             player_reward = self.FORMAT_PENALTY  # Penalty for invalid format
         else:
-            env_results = player_result.get("result", {})
+            # Current orchestrator emits a flat player_result schema.
+            env_results = player_result
 
             for res in env_results.get("results", []):
                 word, result = res.get("word"), res.get("result")
